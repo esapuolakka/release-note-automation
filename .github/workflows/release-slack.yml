@@ -73,10 +73,27 @@ jobs:
                   head: tagName
                 });
 
-                contentText = comparison.commits
-                  .filter(c => !c.commit.message.startsWith('Merge'))
-                  .map(c => `- ${c.commit.message.split('\n')[0]}`)
-                  .join('\n');
+                const squashCommits = comparison.commits
+                  .filter(c => !c.commit.message.startsWith('Merge'));
+
+                const commitEntries = await Promise.all(
+                  squashCommits.map(async (c) => {
+                    const match = c.commit.message.match(/\(#(\d+)\)/);
+                    if (match) {
+                      try {
+                        const { data: pr } = await github.rest.pulls.get({
+                          owner: repo.owner,
+                          repo: repo.repo,
+                          pull_number: parseInt(match[1])
+                        });
+                        return `PR #${pr.number}: ${pr.title}\n${pr.body || ''}`;
+                      } catch (e) {}
+                    }
+                    return c.commit.message.split('\n')[0];
+                  })
+                );
+
+                contentText = commitEntries.join('\n\n---\n\n');
               }
             }
 
