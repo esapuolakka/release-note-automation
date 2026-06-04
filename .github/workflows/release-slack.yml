@@ -51,12 +51,69 @@ jobs:
 
             const validPRs = prDetails.filter(Boolean);
 
-            const prText = validPRs.map(pr =>
+            let contentText = validPRs.map(pr =>
               `PR #${pr.number}: ${pr.title}\n${pr.body}`
             ).join('\n\n---\n\n');
 
+            if (!contentText) {
+              const { data: tags } = await github.rest.repos.listTags({
+                owner: repo.owner,
+                repo: repo.repo,
+                per_page: 10
+              });
+
+              const currentTagIndex = tags.findIndex(t => t.name === tagName);
+              const previousTag = tags[currentTagIndex + 1];
+
+              if (previousTag) {
+                const { data: comparison } = await github.rest.repos.compareCommits({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  base: previousTag.name,
+                  head: tagName
+                });
+
+                contentText = comparison.commits
+                  .filter(c => !c.commit.message.startsWith('Merge'))
+                  .map(c => `- ${c.commit.message.split('\n')[0]}`)
+                  .join('\n');
+              }
+            }
+
+            if (!contentText) {
+              await fetch('https://slack.com/api/chat.postMessage', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`
+                },
+                body: JSON.stringify({
+                  channel: process.env.SLACK_CHANNEL_ID,
+                  blocks: [
+                    {
+                      type: 'header',
+                      text: { type: 'plain_text', text: `🚀 ${releaseName || tagName}` }
+                    },
+                    {
+                      type: 'section',
+                      text: { type: 'mrkdwn', text: 'No release notes available for this release.' }
+                    },
+                    {
+                      type: 'actions',
+                      elements: [{
+                        type: 'button',
+                        text: { type: 'plain_text', text: 'View release' },
+                        url: releaseUrl
+                      }]
+                    }
+                  ]
+                })
+              });
+              return;
+            }
+
             const botInstructions = fs.readFileSync('.github/release-notes-prompt.md', 'utf8');
-            const prompt = `${botInstructions}\n\n${prText}`;
+            const prompt = `${botInstructions}\n\n${contentText}`;
 
             const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
               method: 'POST',
