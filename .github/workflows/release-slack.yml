@@ -56,25 +56,32 @@ jobs:
             ).join('\n\n---\n\n');
 
             if (!contentText) {
-              const { data: tags } = await github.rest.repos.listTags({
+              const { data: releases } = await github.rest.repos.listReleases({
                 owner: repo.owner,
                 repo: repo.repo,
                 per_page: 10
               });
 
-              const currentTagIndex = tags.findIndex(t => t.name === tagName);
-              const previousTag = tags[currentTagIndex + 1];
+              const currentReleaseIndex = releases.findIndex(r => r.tag_name === tagName);
+              const previousRelease = releases[currentReleaseIndex + 1];
 
-              if (previousTag) {
+              console.log(`Current tag: ${tagName}, previous tag: ${previousRelease ? previousRelease.tag_name : 'none'}`);
+
+              if (previousRelease) {
                 const { data: comparison } = await github.rest.repos.compareCommits({
                   owner: repo.owner,
                   repo: repo.repo,
-                  base: previousTag.name,
+                  base: previousRelease.tag_name,
                   head: tagName
                 });
 
+                console.log(`Total commits in comparison: ${comparison.commits.length}`);
+
                 const squashCommits = comparison.commits
                   .filter(c => !c.commit.message.startsWith('Merge'));
+
+                console.log(`Squash commits after filtering merges: ${squashCommits.length}`);
+                squashCommits.forEach(c => console.log(`  - ${c.commit.message.split('\n')[0]}`));
 
                 const commitEntries = await Promise.all(
                   squashCommits.map(async (c) => {
@@ -86,14 +93,18 @@ jobs:
                           repo: repo.repo,
                           pull_number: parseInt(match[1])
                         });
+                        console.log(`  Fetched PR #${pr.number}: ${pr.title}`);
                         return `PR #${pr.number}: ${pr.title}\n${pr.body || ''}`;
-                      } catch (e) {}
+                      } catch (e) {
+                        console.log(`  Failed to fetch PR ${match[1]}: ${e.message}`);
+                      }
                     }
                     return c.commit.message.split('\n')[0];
                   })
                 );
 
-                contentText = commitEntries.join('\n\n---\n\n');
+                contentText = commitEntries.filter(e => e && e.trim()).join('\n\n---\n\n');
+                console.log(`Final contentText length: ${contentText.length}`);
               }
             }
 
