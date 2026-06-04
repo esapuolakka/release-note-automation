@@ -9,6 +9,9 @@ jobs:
     if: ${{ vars.RELEASE_NOTES_ENABLED != 'false' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Generate AI summary and notify Slack
         uses: actions/github-script@v7
         env:
@@ -17,6 +20,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
         with:
           script: |
+            const fs = require('fs');
             const releaseBody = context.payload.release.body || '';
             const tagName = context.payload.release.tag_name;
             const releaseName = context.payload.release.name;
@@ -51,21 +55,8 @@ jobs:
               `PR #${pr.number}: ${pr.title}\n${pr.body}`
             ).join('\n\n---\n\n');
 
-            const prompt = `You are a technical writer creating release notes for a mixed audience: development teams, marketing, sales, and customer support staff.
-
-            Below are the PRs from a GitHub release with their titles and descriptions.
-            Write a clear, concise bullet point summary from an end-user perspective.
-
-            Guidelines:
-            - Write in English
-            - Maximum 6 bullets
-            - Do not mention PR numbers
-            - Focus on user-facing changes and business impact
-            - Skip any changes related to dev/staging/development environment updates, CI/CD pipeline changes, test environment configurations, or internal tooling that does not affect end users
-            - Use plain language that non-technical readers (marketing, sales, support) can understand — avoid jargon
-            - If a change affects a specific feature or area, mention it briefly (e.g. "Checkout flow:", "User profile:")
-
-            ${prText}`;
+            const botInstructions = fs.readFileSync('.github/release-notes-prompt.md', 'utf8');
+            const prompt = `${botInstructions}\n\n${prText}`;
 
             const aiResponse = await fetch('https://api.anthropic.com/v1/messages', {
               method: 'POST',
