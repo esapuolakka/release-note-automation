@@ -56,35 +56,53 @@ jobs:
             ).join('\n\n---\n\n');
 
             if (!contentText) {
+              // Find the previous release tag — try GitHub releases first, fall back to git tags
+              let previousTagName = null;
+
               const { data: releases } = await github.rest.repos.listReleases({
                 owner: repo.owner,
                 repo: repo.repo,
-                per_page: 10
+                per_page: 20
               });
-
               const currentReleaseIndex = releases.findIndex(r => r.tag_name === tagName);
-              const previousRelease = releases[currentReleaseIndex + 1];
+              if (currentReleaseIndex !== -1 && releases[currentReleaseIndex + 1]) {
+                previousTagName = releases[currentReleaseIndex + 1].tag_name;
+                console.log(`Previous tag from releases: ${previousTagName}`);
+              }
 
-              console.log(`Current tag: ${tagName}, previous tag: ${previousRelease ? previousRelease.tag_name : 'none'}`);
+              if (!previousTagName) {
+                const { data: tags } = await github.rest.repos.listTags({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  per_page: 20
+                });
+                const currentTagIndex = tags.findIndex(t => t.name === tagName);
+                if (currentTagIndex !== -1 && tags[currentTagIndex + 1]) {
+                  previousTagName = tags[currentTagIndex + 1].name;
+                  console.log(`Previous tag from git tags: ${previousTagName}`);
+                }
+              }
 
-              if (previousRelease) {
+              console.log(`Comparing ${previousTagName || 'none'} -> ${tagName}`);
+
+              if (previousTagName) {
                 const { data: comparison } = await github.rest.repos.compareCommits({
                   owner: repo.owner,
                   repo: repo.repo,
-                  base: previousRelease.tag_name,
+                  base: previousTagName,
                   head: tagName
                 });
 
-                console.log(`Total commits in comparison: ${comparison.commits.length}`);
+                console.log(`Commits in range: ${comparison.commits.length}`);
 
-                const squashCommits = comparison.commits
-                  .filter(c => !c.commit.message.startsWith('Merge'));
+                const relevantCommits = comparison.commits
+                  .filter(c => !c.commit.message.startsWith('Merge pull request') && !c.commit.message.startsWith('Merge branch'));
 
-                console.log(`Squash commits after filtering merges: ${squashCommits.length}`);
-                squashCommits.forEach(c => console.log(`  - ${c.commit.message.split('\n')[0]}`));
+                console.log(`Commits after filtering merges: ${relevantCommits.length}`);
+                relevantCommits.forEach(c => console.log(`  commit: ${c.commit.message.split('\n')[0]}`));
 
                 const commitEntries = await Promise.all(
-                  squashCommits.map(async (c) => {
+                  relevantCommits.map(async (c) => {
                     const match = c.commit.message.match(/\(#(\d+)\)/);
                     if (match) {
                       try {
@@ -93,10 +111,10 @@ jobs:
                           repo: repo.repo,
                           pull_number: parseInt(match[1])
                         });
-                        console.log(`  Fetched PR #${pr.number}: ${pr.title}`);
+                        console.log(`  Resolved PR #${pr.number}: ${pr.title}`);
                         return `PR #${pr.number}: ${pr.title}\n${pr.body || ''}`;
                       } catch (e) {
-                        console.log(`  Failed to fetch PR ${match[1]}: ${e.message}`);
+                        console.log(`  Could not fetch PR ${match[1]}: ${e.message}`);
                       }
                     }
                     return c.commit.message.split('\n')[0];
@@ -104,8 +122,15 @@ jobs:
                 );
 
                 contentText = commitEntries.filter(e => e && e.trim()).join('\n\n---\n\n');
-                console.log(`Final contentText length: ${contentText.length}`);
               }
+
+              // Last resort: use the release body text as-is
+              if (!contentText && releaseBody.trim()) {
+                contentText = releaseBody.trim();
+                console.log('Using release body as content fallback');
+              }
+
+              console.log(`contentText length: ${contentText.length}`);
             }
 
             if (!contentText) {
