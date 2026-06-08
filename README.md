@@ -13,3 +13,5 @@ The meeting room smelled faintly of dry-erase marker and yesterday's lunch. Some
 At four o'clock the light shifted and the office took on a warmer tone, the kind that makes even a Monday feel briefly forgiving. She saved her work, closed three browser tabs she had been meaning to read, and decided they could wait until tomorrow.
 
 The city outside had slowed to its evening pace. Buses moved with more purpose, carrying people homeward. A child counted cracks in the pavement. A dog paused at a lamppost with great interest. The day had been ordinary, which is to say it had been enough.
+
+Good evening.
