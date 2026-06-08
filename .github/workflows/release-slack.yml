@@ -21,116 +21,64 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const releaseBody = context.payload.release.body || '';
             const tagName = context.payload.release.tag_name;
             const releaseName = context.payload.release.name;
             const releaseUrl = context.payload.release.html_url;
+            const releaseDate = context.payload.release.published_at;
             const repo = context.repo;
 
-            const prNumbers = [...releaseBody.matchAll(/#(\d+)/g)]
-              .map(m => parseInt(m[1]));
+            // Find the previous release to establish the date range
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: repo.owner,
+              repo: repo.repo,
+              per_page: 20
+            });
+            const currentReleaseIndex = releases.findIndex(r => r.tag_name === tagName);
+            const previousRelease = currentReleaseIndex !== -1 ? releases[currentReleaseIndex + 1] : null;
+            const previousDate = previousRelease ? previousRelease.published_at : null;
 
-            const prDetails = await Promise.all(
-              prNumbers.map(async (num) => {
-                try {
-                  const { data: pr } = await github.rest.pulls.get({
-                    owner: repo.owner,
-                    repo: repo.repo,
-                    pull_number: num
-                  });
-                  return {
-                    number: num,
-                    title: pr.title,
-                    body: pr.body || ''
-                  };
-                } catch (e) {
-                  return null;
-                }
-              })
-            );
+            console.log(`Current release: ${tagName} (${releaseDate})`);
+            console.log(`Previous release: ${previousRelease ? previousRelease.tag_name : 'none'} (${previousDate || 'beginning of project'})`);
 
-            const validPRs = prDetails.filter(Boolean);
+            // Collect all PRs merged to develop in this release window
+            let allPRs = [];
+            let page = 1;
+            while (true) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner: repo.owner,
+                repo: repo.repo,
+                state: 'closed',
+                base: 'develop',
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 100,
+                page
+              });
+              if (prs.length === 0) break;
+              const inRange = prs.filter(pr =>
+                pr.merged_at &&
+                pr.merged_at <= releaseDate &&
+                (!previousDate || pr.merged_at > previousDate)
+              );
+              allPRs.push(...inRange);
+              // Stop if oldest PR on this page was updated before the window starts
+              const oldestUpdated = prs[prs.length - 1].updated_at;
+              if (previousDate && oldestUpdated < previousDate) break;
+              if (prs.length < 100) break;
+              page++;
+            }
 
-            let contentText = validPRs.map(pr =>
-              `PR #${pr.number}: ${pr.title}\n${pr.body}`
+            console.log(`PRs merged to develop in this release: ${allPRs.length}`);
+            allPRs.forEach(pr => console.log(`  #${pr.number}: ${pr.title} (merged: ${pr.merged_at})`));
+
+            let contentText = allPRs.map(pr =>
+              `PR #${pr.number}: ${pr.title}\n${pr.body || ''}`
             ).join('\n\n---\n\n');
 
             if (!contentText) {
-              // Find the previous release tag — try GitHub releases first, fall back to git tags
-              let previousTagName = null;
-
-              const { data: releases } = await github.rest.repos.listReleases({
-                owner: repo.owner,
-                repo: repo.repo,
-                per_page: 20
-              });
-              const currentReleaseIndex = releases.findIndex(r => r.tag_name === tagName);
-              if (currentReleaseIndex !== -1 && releases[currentReleaseIndex + 1]) {
-                previousTagName = releases[currentReleaseIndex + 1].tag_name;
-                console.log(`Previous tag from releases: ${previousTagName}`);
-              }
-
-              if (!previousTagName) {
-                const { data: tags } = await github.rest.repos.listTags({
-                  owner: repo.owner,
-                  repo: repo.repo,
-                  per_page: 20
-                });
-                const currentTagIndex = tags.findIndex(t => t.name === tagName);
-                if (currentTagIndex !== -1 && tags[currentTagIndex + 1]) {
-                  previousTagName = tags[currentTagIndex + 1].name;
-                  console.log(`Previous tag from git tags: ${previousTagName}`);
-                }
-              }
-
-              console.log(`Comparing ${previousTagName || 'none'} -> ${tagName}`);
-
-              if (previousTagName) {
-                const { data: comparison } = await github.rest.repos.compareCommits({
-                  owner: repo.owner,
-                  repo: repo.repo,
-                  base: previousTagName,
-                  head: tagName
-                });
-
-                console.log(`Commits in range: ${comparison.commits.length}`);
-
-                const relevantCommits = comparison.commits
-                  .filter(c => !c.commit.message.startsWith('Merge pull request') && !c.commit.message.startsWith('Merge branch'));
-
-                console.log(`Commits after filtering merges: ${relevantCommits.length}`);
-                relevantCommits.forEach(c => console.log(`  commit: ${c.commit.message.split('\n')[0]}`));
-
-                const commitEntries = await Promise.all(
-                  relevantCommits.map(async (c) => {
-                    const match = c.commit.message.match(/\(#(\d+)\)/);
-                    if (match) {
-                      try {
-                        const { data: pr } = await github.rest.pulls.get({
-                          owner: repo.owner,
-                          repo: repo.repo,
-                          pull_number: parseInt(match[1])
-                        });
-                        console.log(`  Resolved PR #${pr.number}: ${pr.title}`);
-                        return `PR #${pr.number}: ${pr.title}\n${pr.body || ''}`;
-                      } catch (e) {
-                        console.log(`  Could not fetch PR ${match[1]}: ${e.message}`);
-                      }
-                    }
-                    return c.commit.message.split('\n')[0];
-                  })
-                );
-
-                contentText = commitEntries.filter(e => e && e.trim()).join('\n\n---\n\n');
-              }
-
-              // Last resort: use the release body text as-is
-              if (!contentText && releaseBody.trim()) {
-                contentText = releaseBody.trim();
-                console.log('Using release body as content fallback');
-              }
-
-              console.log(`contentText length: ${contentText.length}`);
+              console.log('No PRs found in develop — falling back to release body');
+              const releaseBody = context.payload.release.body || '';
+              if (releaseBody.trim()) contentText = releaseBody.trim();
             }
 
             if (!contentText) {
