@@ -1,0 +1,19 @@
+{
+  "source": {
+    "repository": null,
+    "branch": "main",
+    "tag": null
+  },
+  "llm": {
+    "provider": "anthropic",
+    "model": null
+  },
+  "promptFile": "prompts/release-notes.md",
+  "targets": ["email"],
+  "email": {
+    "to": [],
+    "from": null,
+    "subject": "Release notes - {{release}}",
+    "smtp": { "host": "smtp.gmail.com", "port": 465 }
+  }
+}

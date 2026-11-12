@@ -1,0 +1,55 @@
+name: Release notes
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      repository: { description: 'owner/repo to describe (default: this repo)', required: false }
+      branch: { description: 'Branch PRs were merged into (main, master, develop...)', required: false }
+      tag: { description: 'Release tag (default: latest release)', required: false }
+      targets: { description: 'Comma separated targets, e.g. email,slack', required: false }
+      dry_run: { description: 'Print the notes instead of sending', type: boolean, default: false }
+
+jobs:
+  release-notes:
+    if: ${{ vars.RELEASE_NOTES_ENABLED != 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      - name: Generate and send release notes
+        run: node src/index.js ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          # --- Settings: workflow inputs > repository Variables > release-notes.config.json ---
+          # On a release event the release's own repo and tag are used.
+          RN_REPOSITORY: ${{ github.event_name == 'release' && github.repository || inputs.repository || vars.RN_REPOSITORY }}
+          RN_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RN_BRANCH: ${{ inputs.branch || vars.RN_BRANCH }}
+          RN_TARGETS: ${{ inputs.targets || vars.RN_TARGETS }}
+          RN_LLM_PROVIDER: ${{ vars.RN_LLM_PROVIDER }}
+          RN_LLM_MODEL: ${{ vars.RN_LLM_MODEL }}
+          RN_LLM_BASE_URL: ${{ vars.RN_LLM_BASE_URL }}
+          RN_PROMPT_FILE: ${{ vars.RN_PROMPT_FILE }}
+          RN_EMAIL_TO: ${{ vars.RN_EMAIL_TO }}
+          RN_EMAIL_FROM: ${{ vars.RN_EMAIL_FROM }}
+          RN_EMAIL_SUBJECT: ${{ vars.RN_EMAIL_SUBJECT }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          # --- Secrets (add only those your chosen provider/targets need) ---
+          # Use SOURCE_GITHUB_TOKEN (read access) to describe another/private repository.
+          GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
